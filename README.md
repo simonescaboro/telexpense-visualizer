@@ -10,7 +10,9 @@ This is a basic Streamlit app to visualize your expenses and incomes reported us
 To run locally the visualizer:
 
 1. Clone the repo
-2. Install dependencies `python -m pip install .`
-3. Run the local server `python -m streamlit run main.py`
+2. Make your Telexpense spreadsheet "available for those with the link."
+3. Install dependencies `python -m pip install .`
+4. Run the local server `python -m streamlit run main.py`
+5. The first time, insert the share link (this will be saved locally)
 
-You can also use the deployed app on this link: []()
+You can also use the deployed app on this link: [](). In this case, you will have to insert the share link each time you use the visualizer.
