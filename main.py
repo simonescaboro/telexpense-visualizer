@@ -3,7 +3,6 @@ import streamlit as st
 import pandas as pd
 from typing import Optional, Sequence
 import os
-import urllib
 import gspread
 from utils import (
         _r,
@@ -189,6 +188,8 @@ def month_overview(
         df_expenses: pd.DataFrame
         ):
 
+    header("Month Overview")
+
     respect_to = st.selectbox(
             "Compare to",
             ["Previous month", "Average previous months (same year)" ,"Previous year"],
@@ -203,7 +204,6 @@ def month_overview(
         prev_month = curr_month - 1 
         prev_year = curr_year if respect_to != "Prev year" else curr_year - 1
 
-    header("Month Overview")
 
 
     curr_incomes  = get_sum(select_month_year(df_incomes, curr_month, curr_year))
