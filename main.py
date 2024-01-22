@@ -4,6 +4,8 @@ import pandas as pd
 from typing import Optional, Sequence
 import os
 import gspread
+import urllib
+from pathlib import Path
 from utils import (
         _r,
         delta,
@@ -11,31 +13,75 @@ from utils import (
         get_curr_month_year
         )
 
-def load_url() -> str:
-    # url = "https://docs.google.com/spreadsheets/d/1RTNrGFkjZS5-FBC5KvpXsEQVkAEYF9tLcVpztuCbliw/edit?usp=sharing"
-    with open("sheet_info.txt","r") as fp:
-        url = fp.read()
-    return url
+def get_placeholder() -> str:
+    path = Path("sheet.txt")
+    if path.exists():
+        with path.open() as fp:
+            url = fp.read()
+            st.session_state.url = url
+            return url
+
+
+def set_placeholder(url: str):
+    with open("sheet.txt", "w") as fp:
+        fp.write(url)
+
+
+# @st.cache_data(experimental_allow_widgets=True)
+def load_url(local_cache: bool = True):
+    st.write("Insert the URL of your Telexpense Sheet 💸")
+
+    field, button = st.columns([0.8,0.2])
+    with field:
+        if local_cache:
+            placeholder = get_placeholder() 
+        else:
+            placeholder = None
+        url = st.text_input("Sheet URL", placeholder, label_visibility='collapsed')
+
+    with button:
+        if st.button("Start"):
+            st.session_state.url = url
+            if local_cache:
+                set_placeholder(url)
+
+
+def error_page(error: str):
+    st.error(f"""
+             ⚠️ *Error*   {error}
+             """)
+    st.subheader("A little tutorial for you 🫡")
+    st.image('guide.gif', caption='Guide to use the visualizer')
+
 
 def load_dataframe(url: str) -> pd.DataFrame:
     sheet_name = "Transactions"
-    sheet_id = extract_id_from_url(url)
-    url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet={sheet_name}"
-    df = pd.read_csv(url) 
-    return df
+    try:
+        sheet_id = extract_id_from_url(url)
+        url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet={sheet_name}"
+        df = pd.read_csv(url) 
+        return df
+    except urllib.error.HTTPError:
+        error_page("Check if the sheet is **shared** or if the URL is correct")
+    except gspread.exceptions.NoValidUrlKeyFound:
+        error_page("Something wrong with the URL, check it!")
+    except:
+        error_page("General error")
+    return None
 
 
 def header(title: str):
     st.header(title, divider="rainbow")
 
 
-def load_data(url: str) -> pd.DataFrame:
-    df = load_dataframe(url)
+def load_data(df: pd.DataFrame) -> pd.DataFrame:
     df = df[["Date","Category","Amount","Account","Description"]]
 
     # lower all the columns' names
     df = df.rename(columns={col:col.lower() for col in df.columns})
 
+    df = df.query("category != 'Transfer'")
+    print(df[["date", "category","amount"]])
     # replace possible commas in the numbers, so can be correcly casted to numerical
     df["amount"] = df["amount"].apply(lambda value : value.replace(",",".") if isinstance(value, str) else value)
 
@@ -45,14 +91,12 @@ def load_data(url: str) -> pd.DataFrame:
     # flag usefull for code readability
     df["expense"] = df["amount"].apply(lambda value : value < 0)
 
-    def normalize_amount(row: pd.Series):
-        row.amount = -row.amount if row.expense else row.amount
-        return row
-
-    df = df.apply(lambda row : normalize_amount(row), axis=1)
+    df["amount"] = df["amount"].apply(lambda amount : abs(amount))
+    print(df[["date","category","amount"]])
+    print("inc", len(df[~df.expense]))
+    print("ex", len(df[df.expense]))
 
     # remove transfer entries, are not relevant for the analysis
-    df = df.query("category != 'Transfer'")
     return df
 
 
@@ -126,6 +170,7 @@ def category_inspector_aux(df: pd.DataFrame, title: str):
         df_tmp = df[df.date.dt.month == select_month]
 
     df_tmp = df_tmp[["date","category","amount","description"]]
+    print(title, df_tmp.category.unique())
     
     plot_dataframe(df_tmp.sort_values(by=["amount"], ascending=False))
 
@@ -152,8 +197,11 @@ def plot_dataframe(df: pd.DataFrame):
 def category_inspector_section(df: pd.DataFrame):
     header("Category inspector 🕵")
 
+    print(len(df))
     df_incomes = df[~df.expense]
+    print(len(df_incomes))
     df_expenses = df[df.expense]
+    print(len(df_expenses))
 
     category_inspector_aux(df_incomes, "incomes")
     category_inspector_aux(df_expenses, "expenses")
@@ -309,9 +357,11 @@ def overview_section(df: pd.DataFrame):
     df_incomes = df[~df.expense]
     df_expenses = df[df.expense]
 
-    month_overview(df_incomes, df_expenses)
+    with st.container(border=True):
+        month_overview(df_incomes, df_expenses)
 
-    year_overview(df_incomes, df_expenses)
+    with st.container(border=True):
+        year_overview(df_incomes, df_expenses)
 
 
 
@@ -372,52 +422,33 @@ def incomes_expenses_section(df: pd.DataFrame, title: str):
     plot_trend_bars(df_tmp)
 
 
-def main():
+def body():
     with st.spinner('Downloading data...'):
-        df = load_data(load_url())
+        df = load_dataframe(st.session_state.url)
+    if df is not None:
+        df = load_data(df)
+        overview_section(df)
+        with st.container(border=True):
+            incomes_expenses_section(df, "expenses")
+        with st.container(border=True):
+            incomes_expenses_section(df, "incomes")
+        with st.container(border=True):
+            category_inspector_section(df)
 
-    overview_section(df)
-    incomes_expenses_section(df, "expenses")
-    incomes_expenses_section(df, "incomes")
-    category_inspector_section(df)
 
-
-if __name__ == "__main__":
+def page_config():
     st.set_page_config(
         page_title="Telexpense Visualizer",
         page_icon="💰"
         )
 
     st.title("Telexpense Visualizer 📊")
-    # st.balloons()
-
-# f 'url' not in st.session_state:
-#     st.session_state['key'] = 'value'
-    if 'url' in st.session_state:
-    # if os.path.exists("sheet_info.txt"):
-        main()
-
-    else:
-        st.write("Missing ")
-        url = st.text_input("Sheet URL")
-        if st.button("Start"):
-            # --| url sbagliato
-            # --> url invalido
-            # try:
-            _ = load_dataframe(url)
-            st.session_state['url'] = url 
-                # with open("sheet_info.txt","w") as fp:
-                #     fp.write(url)
-            st.rerun()
-            # except urllib.error.HTTPError:
-            #     st.error("Error! Check if the sheet is shared and the url is correcte or if the URL is correct")
-            #     st.subheader("A little guide for you 🫡")
-            #     st.image('guide.gif', caption='Guide to use the visualizer')
-            # except gspread.exceptions.NoValidUrlKeyFound:
-            #     st.error("Error! Something wrong with the URL, check it!")
-            #     st.subheader("A little guide for you 🫡")
-            #     st.image('guide.gif', caption='Guide to use the visualizer')
-            # except:
-            #     st.error("Error! General error")
 
 
+if __name__ == "__main__":
+
+    page_config()
+
+    load_url()
+    if "url" in st.session_state:
+        body()
