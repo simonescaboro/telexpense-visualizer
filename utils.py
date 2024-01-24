@@ -15,3 +15,9 @@ def delta(first: float, second: float):
 
 def get_curr_month_year() -> Tuple[int,int]:
     return datetime.now().month, datetime.now().year
+
+
+def get_prev_month_year() -> Tuple[int,int]:
+    month, year = get_curr_month_year()
+
+    return (month+11) % 13, year-1

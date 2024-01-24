@@ -1,6 +1,7 @@
 from gspread.utils import extract_id_from_url
 import streamlit as st
 import pandas as pd
+from pandas import DataFrame, Series
 from typing import Optional, Sequence
 import os
 import gspread
@@ -10,8 +11,11 @@ from utils import (
         _r,
         delta,
         get_icon,
-        get_curr_month_year
+        get_curr_month_year,
+        get_prev_month_year
         )
+
+from typing import  Tuple
 
 def get_placeholder() -> str:
     path = Path("sheet.txt")
@@ -27,7 +31,6 @@ def set_placeholder(url: str):
         fp.write(url)
 
 
-# @st.cache_data(experimental_allow_widgets=True)
 def load_url(local_cache: bool = True):
     st.write("Insert the URL of your Telexpense Sheet 💸")
 
@@ -54,7 +57,7 @@ def error_page(error: str):
     st.image('guide.gif', caption='Guide to use the visualizer')
 
 
-def load_dataframe(url: str) -> pd.DataFrame:
+def load_dataframe(url: str) -> DataFrame:
     sheet_name = "Transactions"
     try:
         sheet_id = extract_id_from_url(url)
@@ -74,14 +77,13 @@ def header(title: str):
     st.header(title, divider="rainbow")
 
 
-def load_data(df: pd.DataFrame) -> pd.DataFrame:
+def load_data(df: DataFrame) -> DataFrame:
     df = df[["Date","Category","Amount","Account","Description"]]
 
     # lower all the columns' names
     df = df.rename(columns={col:col.lower() for col in df.columns})
 
     df = df.query("category != 'Transfer'")
-    print(df[["date", "category","amount"]])
     # replace possible commas in the numbers, so can be correcly casted to numerical
     df["amount"] = df["amount"].apply(lambda value : value.replace(",",".") if isinstance(value, str) else value)
 
@@ -92,9 +94,6 @@ def load_data(df: pd.DataFrame) -> pd.DataFrame:
     df["expense"] = df["amount"].apply(lambda value : value < 0)
 
     df["amount"] = df["amount"].apply(lambda amount : abs(amount))
-    print(df[["date","category","amount"]])
-    print("inc", len(df[~df.expense]))
-    print("ex", len(df[df.expense]))
 
     # remove transfer entries, are not relevant for the analysis
     return df
@@ -102,15 +101,15 @@ def load_data(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def get_trend(
-        df: pd.DataFrame,
+        df: DataFrame,
         temporal_period: Sequence[int],
-        categories: pd.Series
-        ) -> pd.DataFrame:
+        categories: Series
+        ) -> DataFrame:
     df = df.groupby(by=[temporal_period, categories]).amount.sum().reset_index(name ='amount')
     return df
 
 
-def plot_trend_line(df: pd.DataFrame, key: str):
+def plot_trend_line(df: DataFrame, key: str):
     import plotly.express as px
 
     on = st.toggle('Log scale',key=f"plot_{key}")
@@ -119,7 +118,7 @@ def plot_trend_line(df: pd.DataFrame, key: str):
     st.plotly_chart(fig, use_container_width=True)
 
 
-def plot_trend_bars(df: pd.DataFrame):
+def plot_trend_bars(df: DataFrame):
     import plotly.graph_objects as go
 
     df = df.groupby("category").amount.sum().reset_index(name="amount")
@@ -131,7 +130,7 @@ def plot_trend_bars(df: pd.DataFrame):
                 y=[k for _,k in values],
                 orientation='h',
                 marker=dict(
-                    color="rgba(90,10,170,0.6)",
+                    color="rgba(90,10,170,0.4)",
                     line=dict(
                         color="rgba(90,10,170,1.0)",
                         width=1),
@@ -142,9 +141,7 @@ def plot_trend_bars(df: pd.DataFrame):
 
 
 
-
-
-def category_inspector_aux(df: pd.DataFrame, title: str):
+def category_inspector_aux(df: DataFrame, title: str):
 
     st.subheader(title.capitalize())
 
@@ -165,17 +162,16 @@ def category_inspector_aux(df: pd.DataFrame, title: str):
     if select_category != "All":
         df_tmp = df[df.category == select_category]
     if select_year != "All":
-        df_tmp = df[df.date.dt.year== select_year]
+        df_tmp = df[df.date.dt.year == select_year]
     if select_month != "All":
         df_tmp = df[df.date.dt.month == select_month]
 
     df_tmp = df_tmp[["date","category","amount","description"]]
-    print(title, df_tmp.category.unique())
     
     plot_dataframe(df_tmp.sort_values(by=["amount"], ascending=False))
 
 
-def plot_dataframe(df: pd.DataFrame):
+def plot_dataframe(df: DataFrame):
     st.dataframe(
             df,
             column_config = {
@@ -194,26 +190,23 @@ def plot_dataframe(df: pd.DataFrame):
             use_container_width=True)
 
 
-def category_inspector_section(df: pd.DataFrame):
+def category_inspector_section(df: DataFrame):
     header("Category inspector 🕵")
 
-    print(len(df))
     df_incomes = df[~df.expense]
-    print(len(df_incomes))
     df_expenses = df[df.expense]
-    print(len(df_expenses))
 
     category_inspector_aux(df_incomes, "incomes")
     category_inspector_aux(df_expenses, "expenses")
 
 
 def select_month_year(
-        df: pd.DataFrame,
+        df: DataFrame,
         month: Optional[int] = None,
         year: Optional[int] = None,
         same_month: bool = True,
         same_year: bool = True,
-        ) -> pd.DataFrame:
+        ) -> DataFrame:
     
     if month:
         month_op = "==" if same_month else "!="
@@ -227,44 +220,65 @@ def select_month_year(
 
 
 
-def get_sum(df: pd.DataFrame) -> float:
+def get_sum(df: DataFrame) -> float:
     return _r(df.amount.sum())
+
+def inc_exp(
+        df_incomes: DataFrame,
+        df_expenses: DataFrame,
+        month: Optional[int] = None,
+        year: Optional[int] = None,
+        same_month: bool = True,
+        same_year: bool = True,
+        ) -> Tuple[DataFrame, DataFrame]:
+    inc = select_month_year(df_incomes, month, year, same_month, same_year)
+    exp = select_month_year(df_expenses, month, year, same_month, same_year)
+    return inc, exp
+
+
+def inc_exp_sum(
+        df_incomes: DataFrame,
+        df_expenses: DataFrame,
+        month: Optional[int] = None,
+        year: Optional[int] = None,
+        same_month: bool = True,
+        same_year: bool = True,
+        ) -> Tuple[float,float]:
+    inc, exp = inc_exp(df_incomes, df_expenses, month, year, same_month, same_year)
+    inc =  get_sum(inc)
+    exp =  get_sum(exp)
+    return inc, exp
 
 
 def month_overview(
-        df_incomes: pd.DataFrame,
-        df_expenses: pd.DataFrame
+        df_incomes: DataFrame,
+        df_expenses: DataFrame
         ):
 
     header("Month Overview")
 
+    options = {k:option for k,option in zip(["month", "monthavg" ,"year"],["Previous month", "Average previous months (same year)" ,"Previous year"])}
     respect_to = st.selectbox(
             "Compare to",
-            ["Previous month", "Average previous months (same year)" ,"Previous year"],
+            options.values(), 
             key="respect_to")
 
     curr_month, curr_year = get_curr_month_year() 
+    prev_month, prev_year = get_prev_month_year() 
 
-    if curr_month == 1:
-        prev_month = 12
-        prev_year = curr_year - 1
-    else:
-        prev_month = curr_month - 1 
-        prev_year = curr_year if respect_to != "Prev year" else curr_year - 1
+    curr_incomes, curr_expenses = inc_exp_sum(df_incomes, df_expenses, curr_month, curr_year)
 
+    if respect_to == options["month"]:
+        prev_year = prev_year if curr_month == 1 else curr_year
+        prev_incomes, prev_expenses = inc_exp_sum(df_incomes, df_expenses, prev_month, prev_year)
 
+    elif respect_to == options["year"]:
+        prev_incomes, prev_expenses = inc_exp_sum(df_incomes, df_expenses, curr_month, prev_year)
 
-    curr_incomes  = get_sum(select_month_year(df_incomes, curr_month, curr_year))
-    curr_expenses = get_sum(select_month_year(df_expenses, curr_month, curr_year))
+    else:# respect_to == options["monthavg"]:
+        df_prev_incomes, df_prev_expenses = inc_exp(df_incomes, df_expenses, curr_month, curr_year, False)
 
-    if respect_to == "prev month" or respect_to == "Prev year":
-        prev_incomes = get_sum(select_month_year(df_incomes, prev_month, prev_year))
-        prev_expenses = get_sum(select_month_year(df_expenses, prev_month, prev_year))
-    else:
-        df_prev_incomes = select_month_year(df_incomes, curr_month, curr_year, False)
-        df_prev_expenses = select_month_year(df_expenses, curr_month, curr_year, False)
-        prev_incomes = 0.0
-        prev_expenses = 0.0
+        prev_incomes = prev_expenses = 0.0
         if not df_prev_incomes.empty:
             prev_incomes = _r(df_prev_incomes.groupby(by=[df_prev_incomes.date.dt.month]).amount.sum().values.mean())
         if not df_prev_expenses.empty:
@@ -292,8 +306,8 @@ def month_overview(
 
 
 def year_overview(
-        df_incomes: pd.DataFrame,
-        df_expenses: pd.DataFrame,
+        df_incomes: DataFrame,
+        df_expenses: DataFrame,
         ):
 
     import plotly.express as px
@@ -301,18 +315,17 @@ def year_overview(
     header("Year Overview")
 
     curr_month, curr_year = get_curr_month_year()
+    _, prev_year = get_prev_month_year()
 
     on = st.toggle('Include current month',key="include_curr_month")
 
     if on:
-        gbl_curr_incomes = get_sum(select_month_year(df_incomes, year=curr_year))
-        gbl_curr_expenses =  get_sum(select_month_year(df_expenses, year=curr_year))
+        gbl_curr_incomes, gbl_curr_expenses = inc_exp_sum(df_incomes, df_expenses, year=curr_year)
     else:
-        gbl_curr_incomes = get_sum(select_month_year(df_incomes, curr_month, curr_year, False))
-        gbl_curr_expenses = get_sum(select_month_year(df_expenses,curr_month, curr_year, False))
+        gbl_curr_incomes, gbl_curr_expenses = inc_exp_sum(df_incomes, df_expenses,curr_month, curr_year, False)
 
-    gbl_prev_incomes = get_sum(select_month_year(df_incomes, year=curr_year-1))
-    gbl_prev_expenses = get_sum(select_month_year(df_expenses, year=curr_year-1))
+    gbl_prev_incomes, gbl_prev_expenses = inc_exp_sum(df_incomes, df_expenses, year=prev_year)
+
 
     gbl_delta_incomes = delta(gbl_curr_incomes, gbl_prev_incomes)
     gbl_delta_expenses = delta(gbl_curr_expenses, gbl_prev_expenses)
@@ -351,7 +364,7 @@ def year_overview(
     st.plotly_chart(fig, use_container_width=True)
 
 
-def overview_section(df: pd.DataFrame):
+def overview_section(df: DataFrame):
 
 
     df_incomes = df[~df.expense]
@@ -366,7 +379,7 @@ def overview_section(df: pd.DataFrame):
 
 
     
-def plot_table(title: str, df: pd.DataFrame):
+def plot_table(title: str, df: DataFrame):
     st.write(f"**Top 5 {title}** {get_icon(title)}")
 
     curr_month, curr_year = get_curr_month_year()
@@ -378,7 +391,7 @@ def plot_table(title: str, df: pd.DataFrame):
     plot_dataframe(df_tmp.sort_values(by=["amount"], ascending=False).head(5))
 
 
-def incomes_expenses_section(df: pd.DataFrame, title: str):
+def incomes_expenses_section(df: DataFrame, title: str):
     is_expenses = title == "expenses"
 
     df = df.query(f"expense == {is_expenses}")
@@ -443,12 +456,3 @@ def page_config():
         )
 
     st.title("Telexpense Visualizer 📊")
-
-
-if __name__ == "__main__":
-
-    page_config()
-
-    load_url()
-    if "url" in st.session_state:
-        body()
