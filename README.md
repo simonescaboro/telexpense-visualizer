@@ -5,10 +5,12 @@ This is a basic Streamlit app to visualize your expenses and incomes
 reported using the Telegram bot [Telexpense](https://github.com/pavelmakis/telexpense).
 
 
-<img align="center" src="https://github.com/simonescaboro/telexpense-visualizer/assets/25270576/74c33123-f520-4045-97a1-1c7e753af28b" width="900" height="600">
+<img align="center" src="https://github.com/simonescaboro/telexpense-visualizer/assets/25270576/07ea7137-1e90-4e1a-9734-8dcf50cf2fcd" width="600" height="400">
 
+---
 
-The visualizer is accessible [here]() but you can run it locally. In both cases, the Telexpense sheet have to be shared with "Anyone with the link".
+The visualizer is accessible [here](), but you can run it locally. In both cases, the Telexpense sheet has to be shared with "Anyone with the link".
+
 
 # Instructions
 
@@ -22,4 +24,4 @@ To run locally the visualizer:
 
 # How to share the Sheet
 
-<img align="center" src="https://github.com/simonescaboro/telexpense-visualizer/assets/25270576/74c33123-f520-4045-97a1-1c7e753af28b" width="900" height="600">
+<img align="center" src="guide.gif" width="600" height="400">
