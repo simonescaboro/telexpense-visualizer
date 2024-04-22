@@ -1,9 +1,11 @@
 from gspread.utils import extract_id_from_url
+from collections import defaultdict
 import streamlit as st
 import pandas as pd
 from pandas import DataFrame, Series
 from typing import Optional, Sequence
 import os
+import re
 import gspread
 import urllib
 from pathlib import Path
@@ -16,6 +18,11 @@ from utils import (
         )
 
 from typing import  Tuple
+
+# loading file errors
+from urllib.error import HTTPError
+from gspread.exceptions import NoValidUrlKeyFound
+
 
 def get_placeholder() -> str:
     path = Path("sheet.txt")
@@ -64,9 +71,9 @@ def load_dataframe(url: str) -> DataFrame:
         url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet={sheet_name}"
         df = pd.read_csv(url) 
         return df
-    except urllib.error.HTTPError:
+    except HTTPError:
         error_page("Check if the sheet is **shared** or if the URL is correct")
-    except gspread.exceptions.NoValidUrlKeyFound:
+    except NoValidUrlKeyFound:
         error_page("Something wrong with the URL, check it!")
     except:
         error_page("General error")
@@ -83,7 +90,9 @@ def load_data(df: DataFrame) -> DataFrame:
     # lower all the columns' names
     df = df.rename(columns={col:col.lower() for col in df.columns})
 
+    # remove transfer entries, are not relevant for the analysis
     df = df.query("category != 'Transfer'")
+
     # replace possible commas in the numbers, so can be correcly casted to numerical
     df["amount"] = df["amount"].apply(lambda value : value.replace(",",".") if isinstance(value, str) else value)
 
@@ -93,9 +102,12 @@ def load_data(df: DataFrame) -> DataFrame:
     # flag usefull for code readability
     df["expense"] = df["amount"].apply(lambda value : value < 0)
 
-    df["amount"] = df["amount"].apply(lambda amount : abs(amount))
+    df["amount"] = df["amount"].apply(abs)
 
-    # remove transfer entries, are not relevant for the analysis
+    # find tags
+    df["tags"] = df["description"].apply(lambda desc : re.findall('#([a-zA-Z0-9_-]+)', desc) if isinstance(desc,str) else [])
+    df["description"] = df["description"].apply(lambda desc : re.sub('#([a-zA-Z0-9_-]+)', '', desc) if isinstance(desc,str) else [])
+
     return df
 
 
@@ -160,13 +172,13 @@ def category_inspector_aux(df: DataFrame, title: str):
 
     df_tmp = df
     if select_category != "All":
-        df_tmp = df[df.category == select_category]
+        df_tmp = df_tmp[df_tmp.category == select_category]
     if select_year != "All":
-        df_tmp = df[df.date.dt.year == select_year]
+        df_tmp = df_tmp[df_tmp.date.dt.year == select_year]
     if select_month != "All":
-        df_tmp = df[df.date.dt.month == select_month]
+        df_tmp = df_tmp[df_tmp.date.dt.month == select_month]
 
-    df_tmp = df_tmp[["date","category","amount","description"]]
+    df_tmp = df_tmp[["date","category","amount","description", "tags"]]
     
     plot_dataframe(df_tmp.sort_values(by=["amount"], ascending=False))
 
@@ -184,7 +196,8 @@ def plot_dataframe(df: DataFrame):
                     "Amount",
                     format="🫰 %.2f"
                     ),
-                "description": "Description"
+                "description": "Description",
+                "tags": "Tags"
                 },
             hide_index=True,
             use_container_width=True)
@@ -287,7 +300,7 @@ def month_overview(
     delta_incomes = delta(curr_incomes,prev_incomes)
     delta_expenses = delta(curr_expenses, prev_expenses)
 
-    _, exp, inc, _= st.columns(4)
+    _, _,  exp, inc, _, _= st.columns(6)
 
     with exp:
         st.metric(
@@ -303,6 +316,79 @@ def month_overview(
 
     plot_table("incomes", select_month_year(df_incomes, curr_month, curr_year))
     plot_table("expenses", select_month_year(df_expenses, curr_month, curr_year))
+
+    print_tags(df_incomes, df_expenses)
+
+
+def aggregate_tags_values(df: pd.DataFrame) -> pd.DataFrame:
+    tags = list()
+    values = list()
+
+    def _mark_tags(row: pd.Series):
+        row_tags = row.tags
+        for row_tag in row_tags:
+            tags.append(row_tag)
+            values.append(row.amount)
+        return row
+
+    df = df.apply(_mark_tags, axis=1)
+
+    df_summary = pd.DataFrame({
+        "tag": tags,
+        "values": values 
+        }).groupby("tag").agg(
+                tag = ("tag","first"),
+                value = ("values","sum")
+                )
+    if not df_summary.empty:
+        df_summary["impact"] = df_summary.value / df["amount"].sum()
+        df_summary["impact"] = df_summary["impact"].apply(lambda i : round(i,2))
+    return df_summary
+        
+        
+        
+
+
+def plot_tag_df(df: pd.DataFrame):
+    st.dataframe(
+            df,
+            column_config = {
+                "tag": "Tag",
+                "impact": st.column_config.NumberColumn(
+                    "Impact",
+                    format="%.2f \%"
+                    ),
+                "value": "Value"
+                },
+            hide_index=True,
+            use_container_width=True)
+
+def print_tags(df_incomes: pd.DataFrame, df_expenses: pd.DataFrame):
+    st.write(f"**#️⃣ Tags**")
+    df_incomes = df_incomes[df_incomes.tags.str.len() > 0]
+    df_expenses = df_expenses[df_expenses.tags.str.len() > 0]
+
+    inc, exp = st.columns(2)
+    
+    inc_tags = aggregate_tags_values(df_incomes)
+    exp_tags = aggregate_tags_values(df_expenses)
+
+    with inc:
+        st.write(f"**Incomes**")
+        if not df_incomes.empty:
+            plot_tag_df(inc_tags)
+        else:
+            st.write(f"*No incomes tags yet*")
+
+    with exp:
+        st.write(f"**Expenses**")
+        if not df_expenses.empty:
+            plot_tag_df(exp_tags)
+        else:
+            st.write(f"*No expenses tags yet*")
+
+
+
 
 
 def year_overview(
@@ -330,7 +416,7 @@ def year_overview(
     gbl_delta_incomes = delta(gbl_curr_incomes, gbl_prev_incomes)
     gbl_delta_expenses = delta(gbl_curr_expenses, gbl_prev_expenses)
  
-    _, exp, inc, _= st.columns(4)
+    _, _, exp, inc, _, _= st.columns(6)
 
     with exp:
         st.metric(
@@ -380,7 +466,7 @@ def overview_section(df: DataFrame):
 
     
 def plot_table(title: str, df: DataFrame):
-    st.write(f"**Top 5 {title}** {get_icon(title)}")
+    st.write(f"{get_icon(title)} **Top 5 {title}**")
 
     curr_month, curr_year = get_curr_month_year()
 
@@ -431,8 +517,11 @@ def incomes_expenses_section(df: DataFrame, title: str):
 
     df_tmp = get_trend(df=df_tmp, temporal_period=temporal_period, categories=df.category)
 
-    plot_trend_line(df_tmp, title)
-    plot_trend_bars(df_tmp)
+    lines, bars = st.columns(2)
+    with lines:
+        plot_trend_line(df_tmp, title)
+    with bars:
+        plot_trend_bars(df_tmp)
 
 
 def body():
@@ -452,7 +541,8 @@ def body():
 def page_config():
     st.set_page_config(
         page_title="Telexpense Visualizer",
-        page_icon="💰"
+        page_icon="💰",
+        layout="wide"
         )
 
     st.title("Telexpense Visualizer 📊")
