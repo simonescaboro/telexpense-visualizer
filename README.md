@@ -19,7 +19,7 @@ To run locally the visualizer:
 1. Clone the repo
 2. Go to your Telexpense Sheet and set Share -> General Access to "Anyone with the link" 
 3. Install python dependencies `pip install -r requirements.txt`
-4. Run the local server `python -m streamlit run local.py`
+4. Run the local server `python -m streamlit run src/local.py`
 5. The first time, insert the sheet link (this will be saved locally)
 
 # How to share the Sheet

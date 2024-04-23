@@ -1,13 +1,9 @@
-from lorem_text import lorem
-import random
 import calendar
+import random
 
-accounts = [
-    "Revolut",
-    "HSBC",
-    "Cash",
-    "Savings"
-]
+from lorem_text import lorem
+
+accounts = ["Revolut", "HSBC", "Cash", "Savings"]
 # Expense Classes
 expense_classes = [
     "Housing",
@@ -19,7 +15,7 @@ expense_classes = [
     "Education",
     "Debt Repayment",
     "Personal Care",
-    "Miscellaneous"
+    "Miscellaneous",
 ]
 
 # Expense range assumptions (in dollars)
@@ -33,7 +29,7 @@ expense_ranges = {
     "Education": (100, 1000),
     "Debt Repayment": (10, 1000),
     "Personal Care": (10, 200),
-    "Miscellaneous": (10, 500)
+    "Miscellaneous": (10, 500),
 }
 
 # Income Classes
@@ -42,7 +38,7 @@ income_classes = [
     "Freelance/Contract Work",
     "Investments",
     "Side Hustle",
-    "Gifts and Bonuses"
+    "Gifts and Bonuses",
 ]
 # Income range assumptions (in dollars)
 income_ranges = {
@@ -50,12 +46,13 @@ income_ranges = {
     "Freelance/Contract Work": (1000, 5000),
     "Investments": (100, 1000),
     "Side Hustle": (90, 2000),
-    "Gifts and Bonuses": (50, 500)
+    "Gifts and Bonuses": (50, 500),
 }
 
 
 def generate_description():
     return lorem.sentence()
+
 
 def generate_random_date(year, month):
     # Get the number of days in the given month
@@ -69,45 +66,70 @@ def generate_random_date(year, month):
 
     return date_string
 
-def generate_income(category): 
-    return round(random.uniform(*income_ranges[category]),2)
 
-def generate_expense(category): 
-    return round(-random.uniform(*expense_ranges[category]),2)
+def generate_income(category):
+    return round(random.uniform(*income_ranges[category]), 2)
 
-def generate_entry(month,year,typ):
+
+def generate_expense(category):
+    return round(-random.uniform(*expense_ranges[category]), 2)
+
+
+def generate_entry(month, year, typ):
     if typ == "inc":
         category = random.choice(income_classes)
-        return category, generate_income(category), generate_description(), generate_random_date(year, month), random.choice(accounts)
+        return (
+            category,
+            generate_income(category),
+            generate_description(),
+            generate_random_date(year, month),
+            random.choice(accounts),
+        )
     else:
         category = random.choice(expense_classes)
-        return category, generate_expense(category), generate_description(), generate_random_date(year, month), random.choice(accounts)
+        return (
+            category,
+            generate_expense(category),
+            generate_description(),
+            generate_random_date(year, month),
+            random.choice(accounts),
+        )
 
-def generate_month(month,year):
+
+def generate_month(month, year):
     entries = []
-    for i in range(random.randint(2,10)):
+    for i in range(random.randint(2, 10)):
         entries.append(generate_entry(month, year, "inc"))
-    for i in range(random.randint(20,30)):
+    for i in range(random.randint(20, 30)):
         entries.append(generate_entry(month, year, "exp"))
 
     return entries
 
+
 def generate():
     entries = []
-    for year in range(2019,2024):
-        for month in range(1,13):
+    for year in range(2019, 2024):
+        for month in range(1, 13):
             entries.extend(generate_month(month, year))
     entries.extend(generate_month(1, 2024))
 
-
     import pandas as pd
-    entries = {k:l for l,k in zip(tuple(zip(*entries)),["Category","Amount","Description","Date","Account"])}
+
+    entries = {
+        k: l
+        for l, k in zip(
+            tuple(zip(*entries)),
+            ["Category", "Amount", "Description", "Date", "Account"],
+        )
+    }
     df = pd.DataFrame(entries)
     df["Date"] = pd.to_datetime(df["Date"])
-    df["Date"] = pd.to_datetime(df["Date"].dt.strftime('%m-%d-%Y'))
+    df["Date"] = pd.to_datetime(df["Date"].dt.strftime("%m-%d-%Y"))
     df["In main currency"] = df["Amount"]
     print(df.groupby(by=[df.Date.dt.year, df.Date.dt.month]).Category.count())
-    df = df[["Date","Description","Category","Amount","Account","In main currency"]]
+    df = df[
+        ["Date", "Description", "Category", "Amount", "Account", "In main currency"]
+    ]
     df.to_excel("prova.xlsx")
 
 
