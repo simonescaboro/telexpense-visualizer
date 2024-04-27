@@ -1,6 +1,5 @@
 import re
-from pathlib import Path
-from typing import Optional, Sequence, Tuple
+from typing import Literal, Optional, Sequence, Tuple
 # loading file errors
 from urllib.error import HTTPError
 
@@ -10,11 +9,13 @@ from gspread.exceptions import NoValidUrlKeyFound
 from gspread.utils import extract_id_from_url
 from pandas import DataFrame, Series
 
-from utils import _r, delta, get_curr_month_year, get_icon, get_prev_month_year
+from utils import (_AMOUNT_FORMAT, _AMOUNT_PERC_FORMAT, _r, _tag, _untag,
+                   delta, get_curr_month_year, get_icon, get_link_file_path,
+                   get_prev_month_year)
 
 
 def get_placeholder() -> str:
-    path = Path("sheet.txt")
+    path = get_link_file_path()  # Path("sheet.txt")
     if path.exists():
         with path.open() as fp:
             url = fp.read()
@@ -23,7 +24,8 @@ def get_placeholder() -> str:
 
 
 def set_placeholder(url: str):
-    with open("sheet.txt", "w") as fp:
+    path = get_link_file_path()  # Path("sheet.txt")
+    with open(path, "w") as fp:
         fp.write(url)
 
 
@@ -103,6 +105,8 @@ def load_data(df: DataFrame) -> DataFrame:
         if isinstance(desc, str)
         else []
     )
+
+    # remove tags from description
     df["description"] = df["description"].apply(
         lambda desc: re.sub("#([a-zA-Z0-9_-]+)", "", desc)
         if isinstance(desc, str)
@@ -156,7 +160,7 @@ def plot_trend_bars(df: DataFrame):
     st.plotly_chart(fig, use_container_width=True)
 
 
-def category_inspector_aux(df: DataFrame, title: str):
+def category_inspector_aux(df: DataFrame, title: Literal["expenses", "incomes"]):
     st.subheader(f"{get_icon(title)} {title.capitalize()}")
 
     selectbox = lambda label, values: st.selectbox(
@@ -190,7 +194,7 @@ def plot_dataframe(df: DataFrame):
         column_config={
             "date": st.column_config.DatetimeColumn("Date", format="DD MMM YYYY"),
             "category": "Category",
-            "amount": st.column_config.NumberColumn("Amount", format="🫰 %.2f"),
+            "amount": st.column_config.NumberColumn("Amount", format=_AMOUNT_FORMAT),
             "description": "Description",
             "tags": "Tags",
         },
@@ -200,13 +204,10 @@ def plot_dataframe(df: DataFrame):
 
 
 def category_inspector_section(df: DataFrame):
-    header("Category inspector 🕵")
+    header("🕵 Category inspector")
 
-    df_incomes = df[~df.expense]
-    df_expenses = df[df.expense]
-
-    category_inspector_aux(df_incomes, "incomes")
-    category_inspector_aux(df_expenses, "expenses")
+    category_inspector_aux(df[~df.expense], "incomes")
+    category_inspector_aux(df[df.expense], "expenses")
 
 
 def select_month_year(
@@ -357,8 +358,7 @@ def aggregate_tags_values(df: pd.DataFrame) -> pd.DataFrame:
     )
     if not df_summary.empty:
         df_summary["impact"] = (df_summary.value / df["amount"].sum()) * 100
-        df_summary["tag"] = df_summary["tag"].apply(lambda v: f"🏷️ {v}")
-        # df_summary["impact"] = df_summary["impact"].apply(lambda i: round(i, 2))
+        df_summary["tag"] = df_summary["tag"].apply(_tag)
     return df_summary
 
 
@@ -367,18 +367,21 @@ def plot_tag_df(df: pd.DataFrame):
         df,
         column_config={
             "tag": "Tag",
-            "impact": st.column_config.NumberColumn("Impact", format="%.2f ％"),
-            "value": st.column_config.NumberColumn("Value", format="🫰%.2f"),
+            "impact": st.column_config.NumberColumn(
+                "Impact", format=_AMOUNT_PERC_FORMAT
+            ),
+            "value": st.column_config.NumberColumn("Value", format=_AMOUNT_FORMAT),
         },
+        height=200,
         hide_index=True,
         use_container_width=True,
     )
 
 
-def print_tags(df_incomes: pd.DataFrame, df_expenses: pd.DataFrame):
-    st.write("**#️⃣ Tags**")
+def print_tags(df_incomes: DataFrame, df_expenses: DataFrame):
+    st.write("**#️⃣  Tags**")
 
-    def _print(df: pd.DataFrame, title: str):
+    def _print(df: DataFrame, title: Literal["expenses", "incomes"]):
         # df = df[df.tags.str.len() > 0]
         tags = aggregate_tags_values(df)
         st.write(f"{get_icon(title)} **{title.capitalize()}**")
@@ -396,10 +399,20 @@ def print_tags(df_incomes: pd.DataFrame, df_expenses: pd.DataFrame):
         _print(df_expenses, "expenses")
 
 
+def overall_overview(
+    df_incomes: DataFrame,
+    df_expenses: DataFrame,
+):
+    header("Overall Overview")
+    
+
+
 def year_overview(
     df_incomes: DataFrame,
     df_expenses: DataFrame,
 ):
+    """Year overview section"""
+
     import plotly.express as px
 
     header("Year Overview")
@@ -472,15 +485,19 @@ def year_overview(
 
 
 def overview_section(df: DataFrame):
+    """Month end year overview"""
+
     df_incomes = df[~df.expense]
     df_expenses = df[df.expense]
 
     with st.container(border=True):
-        month, year = st.tabs(["Month", "Year"])
+        month, year, overall = st.tabs(["Month", "Year"])
         with month:
             month_overview(df_incomes, df_expenses)
         with year:
             year_overview(df_incomes, df_expenses)
+        with overall:
+            overall_overview(df_incomes, df_expenses)
 
 
 def plot_table(title: str, df: DataFrame):
@@ -496,6 +513,8 @@ def plot_table(title: str, df: DataFrame):
 
 
 def incomes_expenses_section(df: DataFrame, title: str):
+    """Incomes and expenses section"""
+
     is_expenses = title == "expenses"
 
     df = df.query(f"expense == {is_expenses}")
@@ -523,11 +542,19 @@ def incomes_expenses_section(df: DataFrame, title: str):
         key=f"dont_{str(is_expenses)}_{t}",
     )
 
+    multiselect_tags = lambda t: st.multiselect(
+        "Don't consider these tags",
+        list(set([_tag(tag) for tags in list(df.tags) for tag in tags])),
+        key=f"dont_{str(is_expenses)}_{t}",
+    )
+
     categories_col, accounts_col = st.columns(2)
     with categories_col:
         dont_consider_categories = multiselect("category")
     with accounts_col:
         dont_consider_accounts = multiselect("account")
+
+    ignored_tags = multiselect_tags("tags")
 
     time_period_condition = df.date.dt.year if genre == "Year" else df.date.dt.month
 
@@ -536,6 +563,15 @@ def incomes_expenses_section(df: DataFrame, title: str):
         & ~df.account.isin(dont_consider_accounts)
         & ~df.category.isin(dont_consider_categories)
     ]
+
+    # remove tags
+    if ignored_tags:
+        ignored_tags = [_untag(tag) for tag in ignored_tags]
+        df_tmp = df_tmp[
+            ~df_tmp.tags.apply(
+                lambda t: len(set(t).intersection(set(ignored_tags))) > 0
+            )
+        ]
 
     temporal_period = df_tmp.date.dt.year if genre == "Month" else df_tmp.date.dt.month
 
@@ -551,8 +587,10 @@ def incomes_expenses_section(df: DataFrame, title: str):
 
 
 def body():
+    """Display the entire webapp"""
     with st.spinner("Downloading data..."):
         df = load_dataframe(st.session_state.url)
+
     if df is not None:
         df = load_data(df)
         overview_section(df)
@@ -565,6 +603,5 @@ def body():
 
 
 def page_config():
-    st.set_page_config(page_title="Telexpense Visualizer", page_icon="💰", layout="wide")
-
+    st.set_page_config(page_title="Telexpense Visualizer", page_icon="📊", layout="wide")
     st.title("📊 Telexpense Visualizer")
