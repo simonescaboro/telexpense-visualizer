@@ -1,17 +1,17 @@
+import streamlit as st
 import re
 from typing import Literal, Optional, Sequence, Tuple
 # loading file errors
 from urllib.error import HTTPError
 
 import pandas as pd
-import streamlit as st
 from gspread.exceptions import NoValidUrlKeyFound
 from gspread.utils import extract_id_from_url
 from pandas import DataFrame, Series
 
 from utils import (_AMOUNT_FORMAT, _AMOUNT_PERC_FORMAT, _r, _tag, _untag,
                    delta, get_curr_month_year, get_icon, get_link_file_path,
-                   get_prev_month_year)
+                   get_prev_month_year, get_month_idx, get_month_name)
 
 
 def get_placeholder() -> str:
@@ -160,6 +160,19 @@ def plot_trend_bars(df: DataFrame):
     st.plotly_chart(fig, use_container_width=True)
 
 
+def plot_pie(df: DataFrame):
+    import plotly.graph_objects as go
+
+    df = df.groupby("category").amount.sum().reset_index(name="amount")
+    values = list(zip(df["amount"].values, df["category"].values))
+    values = sorted(values, reverse=False)
+
+    fig = go.Figure(data=[go.Pie(labels=[k for _,k in values], values=[v for v, _ in values], hole=.3)])
+
+    st.plotly_chart(fig, use_container_width=True)
+
+
+
 def category_inspector_aux(df: DataFrame, title: Literal["expenses", "incomes"]):
     st.subheader(f"{get_icon(title)} {title.capitalize()}")
 
@@ -189,10 +202,11 @@ def category_inspector_aux(df: DataFrame, title: Literal["expenses", "incomes"])
 
 
 def plot_dataframe(df: DataFrame):
+    df["description"] = df["description"].apply(lambda v : "" if not isinstance(v,str) else v) 
     st.dataframe(
         df,
         column_config={
-            "date": st.column_config.DatetimeColumn("Date", format="DD MMM YYYY"),
+            "date": st.column_config.DatetimeColumn("Date", format="DD/MM/YYYY"),
             "category": "Category",
             "amount": st.column_config.NumberColumn("Amount", format=_AMOUNT_FORMAT),
             "description": "Description",
@@ -262,34 +276,64 @@ def inc_exp_sum(
 def month_overview(df_incomes: DataFrame, df_expenses: DataFrame):
     header("Month Overview")
 
-    options = {
-        k: option
-        for k, option in zip(
-            ["month", "monthavg", "year"],
-            ["Previous month", "Average previous months (same year)", "Previous year"],
-        )
-    }
-    respect_to = st.selectbox("Compare to", options.values(), key="respect_to")
-
     curr_month, curr_year = get_curr_month_year()
     prev_month, prev_year = get_prev_month_year()
+
+
+    compare_options = dict(
+        # month = f"Previous month ({get_month_name(prev_month).capitalize()})",
+        month = f"Previous month",
+        monthavg = "Average previous months (same year)",
+        # year = f"Previous year ({prev_year})"
+        year = f"Previous year"
+    )
+    
+    df_tmp = pd.concat((df_expenses, df_incomes))
+    year_col, month_col, compare_col = st.columns([0.25,0.25,0.5])
+    with year_col:
+        years = sorted(list(df_tmp.date.dt.year.unique()))
+        selected_year = st.selectbox(
+            f"Select year",
+            years,
+            index=years.index(curr_year),
+            key=f"selectbox_year_overview",
+        )
+    with month_col:
+        months = sorted(list(df_tmp.date.dt.month.unique()))
+        selected_month = st.selectbox(
+            f"Select month",
+            [get_month_name(i).capitalize() for i in months],
+            index=months.index(curr_month),
+            key=f"selectbox_month_overview",
+        )
+    with compare_col:
+        respect_to = st.selectbox("Compare to", compare_options.values(), key="respect_to")
+
+
+    curr_month = get_month_idx(selected_month.lower())
+    curr_year = selected_year
+
+    prev_month, prev_year = get_prev_month_year(curr_month, curr_year)
 
     curr_incomes, curr_expenses = inc_exp_sum(
         df_incomes, df_expenses, curr_month, curr_year
     )
 
-    if respect_to == options["month"]:
+    # compare to the previous month
+    if respect_to == compare_options["month"]:
         prev_year = prev_year if curr_month == 1 else curr_year
         prev_incomes, prev_expenses = inc_exp_sum(
             df_incomes, df_expenses, prev_month, prev_year
         )
 
-    elif respect_to == options["year"]:
+    # compare to the rest of the year
+    elif respect_to == compare_options["year"]:
         prev_incomes, prev_expenses = inc_exp_sum(
             df_incomes, df_expenses, curr_month, prev_year
         )
 
-    else:  # respect_to == options["monthavg"]:
+    # compare to the same month of the previous year
+    else:  # respect_to == compare_options["monthavg"]:
         df_prev_incomes, df_prev_expenses = inc_exp(
             df_incomes, df_expenses, curr_month, curr_year, False
         )
@@ -323,8 +367,8 @@ def month_overview(df_incomes: DataFrame, df_expenses: DataFrame):
     with inc:
         st.metric(label="**:green[Incomes]**", value=curr_incomes, delta=delta_incomes)
 
-    plot_table("incomes", select_month_year(df_incomes, curr_month, curr_year))
-    plot_table("expenses", select_month_year(df_expenses, curr_month, curr_year))
+    plot_topfive("incomes", select_month_year(df_incomes, curr_month, curr_year))
+    plot_topfive("expenses", select_month_year(df_expenses, curr_month, curr_year))
 
     print_tags(
         df_incomes[
@@ -491,7 +535,7 @@ def overview_section(df: DataFrame):
     df_expenses = df[df.expense]
 
     with st.container(border=True):
-        month, year, overall = st.tabs(["Month", "Year"])
+        month, year, overall = st.tabs(["Month", "Year", "Overall"])
         with month:
             month_overview(df_incomes, df_expenses)
         with year:
@@ -500,16 +544,15 @@ def overview_section(df: DataFrame):
             overall_overview(df_incomes, df_expenses)
 
 
-def plot_table(title: str, df: DataFrame):
+def plot_topfive(title: str, df: DataFrame):
     st.write(f"{get_icon(title)} **Top 5 {title}**")
+    
+    if len(df) == 0:
+        st.write(f"*:gray[No data for this period]*")
+    else:
+        df_tmp = df[["date", "category", "amount", "description"]]
 
-    curr_month, curr_year = get_curr_month_year()
-
-    df_tmp = df[(df.date.dt.month == curr_month) & (df.date.dt.year == curr_year)][
-        ["date", "category", "amount", "description"]
-    ]
-
-    plot_dataframe(df_tmp.sort_values(by=["amount"], ascending=False).head(5))
+        plot_dataframe(df_tmp.sort_values(by=["amount"], ascending=False).head(5))
 
 
 def incomes_expenses_section(df: DataFrame, title: str):
@@ -579,11 +622,13 @@ def incomes_expenses_section(df: DataFrame, title: str):
         df=df_tmp, temporal_period=temporal_period, categories=df.category
     )
 
-    lines, bars = st.columns(2)
-    with lines:
-        plot_trend_line(df_tmp, title)
+    plot_trend_line(df_tmp, title)
+
+    bars, pie = st.columns(2)
     with bars:
         plot_trend_bars(df_tmp)
+    with pie:
+        plot_pie(df_tmp)
 
 
 def body():
